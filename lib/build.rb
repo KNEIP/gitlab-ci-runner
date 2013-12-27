@@ -3,12 +3,13 @@ require File.join(ROOT_PATH, 'lib', 'compatibility', 'file')
 require 'childprocess'
 require 'tempfile'
 require 'fileutils'
+require 'bundler'
 
 module GitlabCi
   class Build
     TIMEOUT = 7200
 
-    attr_accessor :id, :commands, :ref, :tmp_file_path, :output, :state
+    attr_accessor :id, :commands, :ref, :tmp_file_path, :output, :state, :before_sha
 
     def initialize(data)
       @commands = data[:commands].to_a
@@ -18,6 +19,9 @@ module GitlabCi
       @project_id = data[:project_id]
       @repo_url = data[:repo_url]
       @state = :waiting
+      @before_sha = data[:before_sha]
+      @timeout = data[:timeout] || TIMEOUT
+      @allow_git_fetch = data[:allow_git_fetch]
     end
 
     def run
@@ -25,15 +29,16 @@ module GitlabCi
 
       @commands.unshift(checkout_cmd)
 
-      if repo_exists?
+      if repo_exists? && @allow_git_fetch
         @commands.unshift(fetch_cmd)
       else
+        FileUtils.rm_rf(project_dir)
         FileUtils.mkdir_p(project_dir)
         @commands.unshift(clone_cmd)
       end
 
       @commands.each do |line|
-        status = command line
+        status = Bundler.with_clean_env { command line }
         @state = :failed and return unless status
       end
 
@@ -89,9 +94,7 @@ module GitlabCi
       @process.cwd = project_dir
 
       # ENV
-      @process.environment['BUNDLE_GEMFILE'] = File.join(project_dir, 'Gemfile')
-      @process.environment['BUNDLE_BIN_PATH'] = ''
-      @process.environment['RUBYOPT'] = ''
+      # Bundler.with_clean_env now handles PATH, GEM_HOME, RUBYOPT & BUNDLE_*.
 
       @process.environment['CI_SERVER'] = 'yes'
       @process.environment['CI_SERVER_NAME'] = 'GitLab CI'
@@ -99,14 +102,16 @@ module GitlabCi
       @process.environment['CI_SERVER_REVISION'] = nil# GitlabCi::Revision
 
       @process.environment['CI_BUILD_REF'] = @ref
+      @process.environment['CI_BUILD_BEFORE_SHA'] = @before_sha
       @process.environment['CI_BUILD_REF_NAME'] = @ref_name
+      @process.environment['CI_BUILD_ID'] = @id
 
       @process.start
 
       @tmp_file_path = @tmp_file.path
 
       begin
-        @process.poll_for_exit(TIMEOUT)
+        @process.poll_for_exit(@timeout)
       rescue ChildProcess::TimeoutError
         @output << "TIMEOUT"
         @process.stop # tries increasingly harsher methods to kill the process.
@@ -139,6 +144,8 @@ module GitlabCi
       cmd = []
       cmd << "cd #{config.builds_dir}"
       cmd << "git clone #{@repo_url} project-#{@project_id}"
+      cmd << "cd project-#{@project_id}"
+      cmd << "git checkout #{@ref}"
       cmd.join(" && ")
     end
 
@@ -146,8 +153,9 @@ module GitlabCi
       cmd = []
       cmd << "cd #{project_dir}"
       cmd << "git reset --hard"
-      cmd << "git clean -f"
-      cmd << "git fetch"
+      cmd << "git clean -fdx"
+      cmd << "git remote set-url origin #{@repo_url}"
+      cmd << "git fetch origin"
       cmd.join(" && ")
     end
 

@@ -1,7 +1,6 @@
 require File.join(ROOT_PATH, 'lib', 'config')
 
 require 'httparty'
-require 'pry'
 require 'json'
 
 module GitlabCi
@@ -35,6 +34,9 @@ module GitlabCi
           :repo_url => response['repo_url'],
           :ref => response['sha'],
           :ref_name => response['ref'],
+          :before_sha => response['before_sha'],
+          :allow_git_fetch => response['allow_git_fetch'],
+          :timeout => response['timeout']
         }
       elsif response.code == 403
         puts 'forbidden'
@@ -46,7 +48,7 @@ module GitlabCi
     end
 
     def update_build(id, state, trace)
-      broadcast "Submiting build #{id} to coordinator..."
+      broadcast "Submitting build #{id} to coordinator..."
 
       options = default_options.merge({
         :state => state,
