@@ -1,5 +1,5 @@
 ['encode', 'config'].map{|file| require File.join(ROOT_PATH, 'lib', file)}
-
+require File.join(ROOT_PATH, 'lib', 'compatibility', 'file')
 require 'childprocess'
 require 'tempfile'
 require 'fileutils'

@@ -1,6 +1,6 @@
 require 'charlock_holmes/string'
 if RUBY_VERSION < "1.9.0"
-  require File.join(ROOT_PATH, 'lib', 'string_1.8')
+  require File.join(ROOT_PATH, 'lib', 'compatibility', 'string')
 end
 
 module GitlabCi

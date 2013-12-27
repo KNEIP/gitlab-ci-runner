@@ -1,5 +1,5 @@
-require_relative 'spec_helper'
-require_relative '../lib/build'
+require 'spec_helper'
+require 'lib/build'
 
 describe 'Build' do
   describe :run do
@@ -14,11 +14,11 @@ describe 'Build' do
 
   def build_data
     {
-      commands: ['bundle'],
-      project_id: 0,
-      id: 9312,
-      ref: '2e008a711430a16092cd6a20c225807cb3f51db7',
-      repo_url: 'https://github.com/randx/six.git'
+      :commands => ['bundle'],
+      :project_id => 0,
+      :id => 9312,
+      :ref => '2e008a711430a16092cd6a20c225807cb3f51db7',
+      :repo_url => 'https://github.com/randx/six.git'
     }
   end
 end

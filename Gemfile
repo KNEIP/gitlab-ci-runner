@@ -1,5 +1,7 @@
 source "http://rubygems.org"
 
+ruby '1.8.7'
+
 gem 'httparty'
 gem 'multi_json', '~> 1.6.1' # Ruby 1.8.7 compatibility
 gem 'childprocess', '0.3.6'
