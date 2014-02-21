@@ -26,6 +26,10 @@ module GitlabCi
       @builds_path ||= File.join(ROOT_PATH, 'tmp', 'builds')
     end
 
+    def artifacts_dir
+      @artifacts_path ||= File.join(ROOT_PATH, 'tmp', 'artifacts')
+    end
+
     def write(key, value)
       @config[key] = value
 

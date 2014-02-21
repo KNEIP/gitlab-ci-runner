@@ -32,8 +32,10 @@ module GitlabCi
       if repo_exists? && @allow_git_fetch
         @commands.unshift(fetch_cmd)
       else
-        FileUtils.rm_rf(project_dir)
-        FileUtils.mkdir_p(project_dir)
+        [project_dir, project_artifacts_dir].each do |dir|
+          FileUtils.rm_rf(dir)
+          FileUtils.mkdir_p(dir)
+        end
         @commands.unshift(clone_cmd)
       end
 
@@ -105,6 +107,8 @@ module GitlabCi
       @process.environment['CI_BUILD_BEFORE_SHA'] = @before_sha
       @process.environment['CI_BUILD_REF_NAME'] = @ref_name
       @process.environment['CI_BUILD_ID'] = @id
+      @process.environment['CI_BUILD_DIR'] = project_dir
+      @process.environment['CI_ARTIFACTS_DIR'] = project_artifacts_dir
 
       @process.start
 
@@ -170,5 +174,10 @@ module GitlabCi
     def project_dir
       File.join(config.builds_dir, "project-#{@project_id}")
     end
+
+    def project_artifacts_dir
+      File.join(config.artifacts_dir, "project-#{@project_id}")
+    end
+
   end
 end
