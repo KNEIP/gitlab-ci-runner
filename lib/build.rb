@@ -5,61 +5,88 @@ end
 require 'childprocess'
 require 'tempfile'
 require 'fileutils'
+require 'bundler'
+require 'shellwords'
 
 module GitlabCi
   class Build
     TIMEOUT = 7200
 
-    attr_accessor :id, :commands, :ref, :tmp_file_path, :output, :state
+    attr_accessor :id, :commands, :ref, :tmp_file_path, :output, :before_sha, :run_at, :post_message
 
     def initialize(data)
+      @output = ""
+      @post_message = ""
       @commands = data[:commands].to_a
       @ref = data[:ref]
       @ref_name = data[:ref_name]
       @id = data[:id]
       @project_id = data[:project_id]
       @repo_url = data[:repo_url]
-      @state = :waiting
+      @before_sha = data[:before_sha]
+      @timeout = data[:timeout] || TIMEOUT
+      @allow_git_fetch = data[:allow_git_fetch]
     end
 
     def run
-      @state = :running
+      @run_file = Tempfile.new("executor")
+      @run_file.chmod(0700)
 
       @commands.unshift(checkout_cmd)
 
-      if repo_exists?
+      if repo_exists? && @allow_git_fetch
         @commands.unshift(fetch_cmd)
       else
+        FileUtils.rm_rf(project_dir)
         FileUtils.mkdir_p(project_dir)
         @commands.unshift(clone_cmd)
       end
 
-      @commands.each do |line|
-        status = command line
-        @state = :failed and return unless status
-      end
+      @run_file.puts %|#!/bin/bash|
+      @run_file.puts %|set -e|
+      @run_file.puts %|trap 'kill -s INT 0' EXIT|
 
-      @state = :success
+      @commands.each do |command|
+        command.strip!
+        @run_file.puts %|echo #{command.shellescape}|
+        @run_file.puts(command)
+      end
+      @run_file.close
+      @run_at = Time.now
+
+      Bundler.with_clean_env { execute("setsid #{@run_file.path}") }
+    end
+
+    def state
+      return :success if success?
+      return :failed if failed?
+      :running
     end
 
     def completed?
-      success? || failed?
+      @process.exited?
     end
 
     def success?
-      state == :success
+      return nil unless completed?
+      @process.exit_code == 0
     end
 
     def failed?
-      state == :failed
+      return nil unless completed?
+      @process.exit_code != 0
     end
 
     def running?
-      state == :running
+      @process.alive?
+    end
+
+    def abort
+      @process.stop
     end
 
     def trace
-      output + tmp_file_output
+      output + tmp_file_output + post_message
     rescue
       ''
     end
@@ -69,31 +96,46 @@ module GitlabCi
       tmp_file_output ||= ''
     end
 
+    def cleanup
+      @tmp_file.rewind
+      @output << GitlabCi::Encode.encode!(@tmp_file.read)
+      @tmp_file.close
+      @tmp_file.unlink
+      @run_file.unlink
+    end
+
+    # Check if build execution is longer
+    # than allowed by timeout
+    def running_too_long?
+      if @run_at && @timeout
+        @run_at + @timeout < Time.now
+      else
+        false
+      end
+    end
+
+    def timeout_abort
+      self.abort
+
+      @post_message = "\nCI Timeout. Execution took longer then #{@timeout} seconds"
+    end
+
     private
 
-    def command(cmd)
+    def execute(cmd)
       cmd = cmd.strip
-      status = 0
-
-      @output ||= ""
-      @output << "\n"
-      @output << cmd
-      @output << "\n"
-
 
       tempfile_params = ["child-output"]
       tempfile_params << {:binmode => true} unless RUBY_VERSION < "1.9.0"
       @tmp_file = Tempfile.new(*tempfile_params)
 
-      @process = ChildProcess.build(cmd)
+      @process = ChildProcess.build('bash', '--login', '-c', cmd)
       @process.io.stdout = @tmp_file
       @process.io.stderr = @tmp_file
       @process.cwd = project_dir
 
       # ENV
-      @process.environment['BUNDLE_GEMFILE'] = File.join(project_dir, 'Gemfile')
-      @process.environment['BUNDLE_BIN_PATH'] = ''
-      @process.environment['RUBYOPT'] = ''
+      # Bundler.with_clean_env now handles PATH, GEM_HOME, RUBYOPT & BUNDLE_*.
 
       @process.environment['CI_SERVER'] = 'yes'
       @process.environment['CI_SERVER_NAME'] = 'GitLab CI'
@@ -101,32 +143,15 @@ module GitlabCi
       @process.environment['CI_SERVER_REVISION'] = nil# GitlabCi::Revision
 
       @process.environment['CI_BUILD_REF'] = @ref
+      @process.environment['CI_BUILD_BEFORE_SHA'] = @before_sha
       @process.environment['CI_BUILD_REF_NAME'] = @ref_name
+      @process.environment['CI_BUILD_ID'] = @id
 
       @process.start
 
       @tmp_file_path = @tmp_file.path
-
-      begin
-        @process.poll_for_exit(TIMEOUT)
-      rescue ChildProcess::TimeoutError
-        @output << "TIMEOUT"
-        @process.stop # tries increasingly harsher methods to kill the process.
-        return false
-      end
-
-      @process.exit_code == 0
-
     rescue => e
-      # return false if any exception occurs
       @output << e.message
-      false
-
-    ensure
-      @tmp_file.rewind
-      @output << GitlabCi::Encode.encode!(@tmp_file.read)
-      @tmp_file.close
-      @tmp_file.unlink
     end
 
     def checkout_cmd
@@ -141,6 +166,8 @@ module GitlabCi
       cmd = []
       cmd << "cd #{config.builds_dir}"
       cmd << "git clone #{@repo_url} project-#{@project_id}"
+      cmd << "cd project-#{@project_id}"
+      cmd << "git checkout #{@ref}"
       cmd.join(" && ")
     end
 
@@ -148,8 +175,9 @@ module GitlabCi
       cmd = []
       cmd << "cd #{project_dir}"
       cmd << "git reset --hard"
-      cmd << "git clean -f"
-      cmd << "git fetch"
+      cmd << "git clean -fdx"
+      cmd << "git remote set-url origin #{@repo_url}"
+      cmd << "git fetch origin"
       cmd.join(" && ")
     end
 

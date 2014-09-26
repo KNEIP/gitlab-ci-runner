@@ -1,7 +1,6 @@
 require File.join(ROOT_PATH, 'lib', 'config')
 
 require 'httparty'
-require 'pry'
 require 'json'
 
 module GitlabCi
@@ -35,6 +34,9 @@ module GitlabCi
           :repo_url => response['repo_url'],
           :ref => response['sha'],
           :ref_name => response['ref'],
+          :before_sha => response['before_sha'],
+          :allow_git_fetch => response['allow_git_fetch'],
+          :timeout => response['timeout']
         }
       elsif response.code == 403
         puts 'forbidden'
@@ -46,7 +48,7 @@ module GitlabCi
     end
 
     def update_build(id, state, trace)
-      broadcast "Submiting build #{id} to coordinator..."
+      broadcast "Submitting build #{id} to coordinator..."
 
       options = default_options.merge({
         :state => state,
@@ -55,20 +57,24 @@ module GitlabCi
 
       response = self.class.put("#{api_url}/builds/#{id}.json", :body => options)
 
-      if response.code == 200
+      case response.code
+      when 200
         puts 'ok'
-        true
+        :success
+      when 404
+        puts 'aborted'
+        :aborted
       else
-        puts 'failed'
+        puts "response error: #{response.code}"
+        :failure
       end
-    rescue
-      puts 'failed'
-      false
+    rescue => e
+      puts "failure: #{e.message}"
+      :failure
     end
 
-    def register_runner(public_key, token)
+    def register_runner(token)
       body = {
-        :public_key => public_key,
         :token => token
       }
 
