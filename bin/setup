@@ -1,8 +1,7 @@
 #!/usr/bin/env ruby
 require 'bundler/setup'
-ROOT_PATH = File.expand_path(File.join(File.dirname(__FILE__), ".."))
-
-require File.join(ROOT_PATH, 'lib', 'setup')
+root_path = File.expand_path(File.join(File.dirname(__FILE__), ".."))
+require File.join(root_path, 'lib', 'setup')
 
 GitlabCi::Setup.new
 exit
